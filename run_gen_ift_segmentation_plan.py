@@ -14,8 +14,12 @@ QUALITY_LEVELS = [
   1, 2, 3, 4, 5, 6, 7, 8
 ]
 
-COST_PATTERN = re.compile(r"^ift_total_cost = ([0-9]+)$", re.MULTILINE)
+
 TIME_PATTERN = re.compile(r"^CodepointToGlyphSegments took: ([0-9.]+) seconds$", re.MULTILINE)
+
+IDEAL_COST_PATTERN = re.compile(r"^ideal_total_cost = ([0-9]+)$", re.MULTILINE)
+IFT_COST_PATTERN = re.compile(r"^ift_total_cost = ([0-9]+)$", re.MULTILINE)
+NON_IFT_COST_PATTERN = re.compile(r"^non_ift_total_cost = ([0-9]+)$", re.MULTILINE)
 
 def check_font(font_path, quality_level):
   """
@@ -40,9 +44,21 @@ def check_font(font_path, quality_level):
 
     stderr_output = result.stderr
 
-    match = COST_PATTERN.search(stderr_output)
+    match = IDEAL_COST_PATTERN.search(stderr_output)
     if match:
-      total_cost = int(match.group(1))
+      ideal_total_cost = int(match.group(1))
+    else:
+      print(f"Error processing {font_path}: total cost not found in output", file=sys.stderr)
+
+    match = IFT_COST_PATTERN.search(stderr_output)
+    if match:
+      ift_total_cost = int(match.group(1))
+    else:
+      print(f"Error processing {font_path}: total cost not found in output", file=sys.stderr)
+
+    match = NON_IFT_COST_PATTERN.search(stderr_output)
+    if match:
+      non_ift_total_cost = int(match.group(1))
     else:
       print(f"Error processing {font_path}: total cost not found in output", file=sys.stderr)
 
@@ -58,7 +74,7 @@ def check_font(font_path, quality_level):
   except Exception as e:
     print(f"Error processing {font_path}: {e} {traceback.format_exc()}", file=sys.stderr)
 
-  return font_path, quality_level, total_cost, total_time
+  return font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time
 
 def main():
   parser = argparse.ArgumentParser(description="Coordinate running the gen_ift_segmentation_plan utility across a collection of fonts.")
@@ -83,7 +99,7 @@ def main():
     print("Failed to init gen_ift_segmentation_plan.")
     sys.exit(1)
 
-  print("font_path, quality_level, total_cost, total_time")
+  print("font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time_s")
   with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
     future_to_path = {
       executor.submit(check_font, path, quality): path
@@ -101,9 +117,8 @@ def main():
       try:
         result = future.result()
         if result is not None:
-          font_path, quality_level, total_cost, total_time = result
-          # TODO XXXX also include quality level
-          print(f"{font_path}, {quality_level}, {total_cost}, {total_time}")
+          font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time = result
+          print(f"{font_path}, {quality_level}, {ideal_total_cost}, {ift_total_cost}, {non_ift_total_cost}, {total_time}")
 
       except Exception as exc:
         print(f"{path} generated an exception: {exc}", file=sys.stderr)
