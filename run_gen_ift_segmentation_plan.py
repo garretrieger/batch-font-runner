@@ -21,7 +21,7 @@ IDEAL_COST_PATTERN = re.compile(r"^ideal_total_cost = ([0-9]+)$", re.MULTILINE)
 IFT_COST_PATTERN = re.compile(r"^ift_total_cost = ([0-9]+)$", re.MULTILINE)
 NON_IFT_COST_PATTERN = re.compile(r"^non_ift_total_cost = ([0-9]+)$", re.MULTILINE)
 
-def check_font(font_path, quality_level):
+def check_font(font_path, quality_level, timeout=None):
   """
   Runs the hb-depend-closure-parity check on a single font.
   Returns a tuple of (font_path, list_of_test_ids_with_under_approx)
@@ -37,7 +37,7 @@ def check_font(font_path, quality_level):
   total_time = 0
 
   try:
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
       print(f"Error processing {font_path}: command line return code {result.returncode}", file=sys.stderr)
       return font_path, total_cost, total_time
@@ -68,6 +68,9 @@ def check_font(font_path, quality_level):
     else:
       print(f"Error processing {font_path}: total time not found in output", file=sys.stderr)
 
+  except subprocess.TimeoutExpired:
+    print(f"Timeout occurred for font: {font_path} at quality level: {quality_level}", file=sys.stderr)
+    return None
   except FileNotFoundError:
     print(f"Error: segmenter executable not found at './gen-segmentation-plan.sh'.", file=sys.stderr)
     sys.exit(1)
@@ -80,6 +83,7 @@ def main():
   parser = argparse.ArgumentParser(description="Coordinate running the gen_ift_segmentation_plan utility across a collection of fonts.")
   parser.add_argument("input_file", help="Text file with one font file path per line.")
   parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 4, help="Number of concurrent executions (default: number of CPUs).")
+  parser.add_argument("-t", "--timeout", type=float, help="Timeout in seconds for each execution.")
 
   args = parser.parse_args()
 
@@ -102,7 +106,7 @@ def main():
   print("font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time_s")
   with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
     future_to_path = {
-      executor.submit(check_font, path, quality): path
+      executor.submit(check_font, path, quality, args.timeout): path
       for path, quality in itertools.product(font_paths, QUALITY_LEVELS)
     }
 
