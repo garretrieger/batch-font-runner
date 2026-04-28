@@ -107,7 +107,7 @@ def main():
     }
 
     processed_count = 0
-    total_fonts = len(font_paths)
+    total_fonts = len(font_paths) * len(QUALITY_LEVELS)
     for future in concurrent.futures.as_completed(future_to_path):
       path = future_to_path[future]
       processed_count += 1
@@ -118,7 +118,7 @@ def main():
         result = future.result()
         if result is not None:
           font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time = result
-          print(f"{font_path}, {quality_level}, {ideal_total_cost}, {ift_total_cost}, {non_ift_total_cost}, {total_time}")
+          print(f"{font_path}; {quality_level}; {ideal_total_cost}; {ift_total_cost}; {non_ift_total_cost}; {total_time}")
 
       except Exception as exc:
         print(f"{path} generated an exception: {exc}", file=sys.stderr)
