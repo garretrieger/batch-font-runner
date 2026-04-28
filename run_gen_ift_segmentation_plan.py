@@ -40,7 +40,7 @@ def check_font(font_path, quality_level, timeout=None):
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
       print(f"Error processing {font_path}: command line return code {result.returncode}", file=sys.stderr)
-      return font_path, total_cost, total_time
+      return None
 
     stderr_output = result.stderr
 
@@ -84,6 +84,7 @@ def main():
   parser.add_argument("input_file", help="Text file with one font file path per line.")
   parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 4, help="Number of concurrent executions (default: number of CPUs).")
   parser.add_argument("-t", "--timeout", type=float, help="Timeout in seconds for each execution.")
+  parser.add_argument("-r", "--resume", help="Path to a previous stdout log file to resume from. Skips already processed font/quality pairs.")
 
   args = parser.parse_args()
 
@@ -98,20 +99,42 @@ def main():
     print("No font paths found in the input file.", file=sys.stderr)
     sys.exit(0)
 
+  skip_set = set()
+  if args.resume:
+    if os.path.isfile(args.resume):
+      with open(args.resume, 'r') as f:
+        for line in f:
+          parts = [p.strip() for p in line.split(';')]
+          if len(parts) >= 2 and parts[0] != "font_path":
+            try:
+              font_path = parts[0]
+              quality_level = int(parts[1])
+              skip_set.add((font_path, quality_level))
+            except ValueError:
+              pass
+    else:
+      print(f"Warning: Resume file '{args.resume}' not found. Starting from scratch.", file=sys.stderr)
+
   result = subprocess.run(["./init-gen-segmentation-plan.sh"], capture_output=True, text=True)
   if result.returncode != 0:
     print("Failed to init gen_ift_segmentation_plan.")
     sys.exit(1)
 
-  print("font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time_s")
+  tasks_to_run = [
+    (path, quality)
+    for path, quality in itertools.product(font_paths, QUALITY_LEVELS)
+    if (path, quality) not in skip_set
+  ]
+
+  print("font_path; quality_level; ideal_total_cost; ift_total_cost; non_ift_total_cost; total_time_s")
   with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
     future_to_path = {
       executor.submit(check_font, path, quality, args.timeout): path
-      for path, quality in itertools.product(font_paths, QUALITY_LEVELS)
+      for path, quality in tasks_to_run
     }
 
     processed_count = 0
-    total_fonts = len(font_paths) * len(QUALITY_LEVELS)
+    total_fonts = len(tasks_to_run)
     for future in concurrent.futures.as_completed(future_to_path):
       path = future_to_path[future]
       processed_count += 1
