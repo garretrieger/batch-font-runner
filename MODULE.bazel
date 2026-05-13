@@ -1,3 +1,3 @@
 bazel_dep(name = "ift_encoder", version = "git")
-git_override(module_name = "ift_encoder", remote = "https://github.com/garretrieger/ift-encoder.git", commit = "94252ea1d0367e8ab1b59a819969410c208cf844")
+git_override(module_name = "ift_encoder", remote = "https://github.com/garretrieger/ift-encoder.git", commit = "ecc89837bf18ec2c4db1aedd6f2a9c57efde56aa")
 git_override(module_name = "ift_encoder_data", remote = "https://github.com/w3c/ift-encoder-data.git", commit = "8f50ef507feac8f8bdf6c39a92f95b7c991dcfda")
