@@ -22,17 +22,60 @@ IDEAL_COST_PATTERN = re.compile(r"^ideal_total_cost = ([0-9]+)$", re.MULTILINE)
 IFT_COST_PATTERN = re.compile(r"^ift_total_cost = ([0-9]+)$", re.MULTILINE)
 NON_IFT_COST_PATTERN = re.compile(r"^non_ift_total_cost = ([0-9]+)$", re.MULTILINE)
 
+def get_cjk_script_flag(font_path):
+  """
+  Checks METADATA.pb for CJK subsets and returns the appropriate flag if applicable.
+  """
+  font_dir = os.path.dirname(font_path)
+  metadata_path = os.path.join(font_dir, "METADATA.pb")
+
+  if not os.path.isfile(metadata_path):
+    return []
+
+  subsets = []
+  try:
+    with open(metadata_path, 'r', encoding='utf-8') as f:
+      for line in f:
+        line = line.strip()
+        if line.startswith("subsets:"):
+          match = re.search(r'subsets:\s*"([^"]+)"', line)
+          if match:
+            subsets.append(match.group(1))
+  except Exception as e:
+    print(f"Error reading {metadata_path}: {e}", file=sys.stderr)
+    return []
+
+  target_subsets = {"chinese-simplified", "chinese-hongkong", "chinese-traditional", "japanese", "korean"}
+  found_target_subsets = [s for s in subsets if s in target_subsets]
+
+  if len(found_target_subsets) == 1:
+    subset = found_target_subsets[0]
+    script_map = {
+      "chinese-simplified": "Script_chinese-simplified",
+      "chinese-hongkong": "Script_chinese-traditional",
+      "chinese-traditional": "Script_chinese-traditional",
+      "japanese": "Script_japanese",
+      "korean": "Script_korean"
+    }
+    script_value = script_map.get(subset)
+    if script_value:
+      return [f"--auto_config_primary_script={script_value}"]
+
+  return []
+
 def check_font(font_path, quality_level, timeout=None):
   """
-  Runs the hb-depend-closure-parity check on a single font.
-  Returns a tuple of (font_path, list_of_test_ids_with_under_approx)
+  Runs the gen-segmentation-plan.sh on a single font.
+  Returns a tuple of (font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count)
   """
+
+  extra_args = get_cjk_script_flag(font_path)
 
   cmd = [
     "./gen-segmentation-plan.sh",
     font_path,
     str(quality_level),
-  ]
+  ] + extra_args
 
   total_cost = 0
   total_time = 0
