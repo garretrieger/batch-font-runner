@@ -83,7 +83,7 @@ def check_font(font_path, quality_level, timeout=None):
   try:
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
-      print(f"Error processing {font_path}: command line return code {result.returncode}", file=sys.stderr)
+      print(f"Error processing {font_path}, quality {quality_level}: command line return code {result.returncode}", file=sys.stderr)
       return None
 
     stderr_output = result.stderr
