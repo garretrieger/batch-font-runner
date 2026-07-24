@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 
 import argparse
+import signal
 import subprocess
 import concurrent.futures
 import re
 import sys
 import os
 import traceback
-import itertools
 
 
 QUALITY_LEVELS = [
-  0, 1, 2, 3, 4, 5, 6, 7, 8
+    1, 2, 3, 4, 5, 6, 7,
 ]
 
 
@@ -81,12 +81,26 @@ def check_font(font_path, quality_level, timeout=None):
   total_time = 0
 
   try:
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    if result.returncode != 0:
-      print(f"Error processing {font_path}, quality {quality_level}: command line return code {result.returncode}", file=sys.stderr)
-      return None
+    with subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    ) as proc:
+      try:
+        _, stderr_output = proc.communicate(timeout=timeout)
+      except subprocess.TimeoutExpired:
+        try:
+          os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+          pass
+        proc.communicate()
+        raise
 
-    stderr_output = result.stderr
+      if proc.returncode != 0:
+        print(f"Error processing {font_path}, quality {quality_level}: command line return code {proc.returncode}", file=sys.stderr)
+        return None
 
     match = CODEPOINT_COUNT_PATTERN.search(stderr_output)
     if match:
@@ -119,13 +133,13 @@ def check_font(font_path, quality_level, timeout=None):
       print(f"Error processing {font_path}: total time not found in output", file=sys.stderr)
 
   except subprocess.TimeoutExpired:
-    print(f"Timeout occurred for font: {font_path} at quality level: {quality_level}", file=sys.stderr)
-    return None
+    raise
   except FileNotFoundError:
     print(f"Error: segmenter executable not found at './gen-segmentation-plan.sh'.", file=sys.stderr)
     sys.exit(1)
   except Exception as e:
     print(f"Error processing {font_path}: {e} {traceback.format_exc()}", file=sys.stderr)
+    return None
 
   return font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count
 
@@ -170,35 +184,57 @@ def main():
     print("Failed to init gen_ift_segmentation_plan.")
     sys.exit(1)
 
-  tasks_to_run = [
-    (path, quality)
-    for path, quality in itertools.product(font_paths, QUALITY_LEVELS)
-    if (path, quality) not in skip_set
-  ]
+  font_task_chains = []
+  total_fonts = 0
+  for path in font_paths:
+    qualities = [q for q in QUALITY_LEVELS if (path, q) not in skip_set]
+    if qualities:
+      font_task_chains.append((path, qualities))
+      total_fonts += len(qualities)
 
   print("font_path; quality_level; ideal_total_cost; ift_total_cost; non_ift_total_cost; total_time_s; codepoint_count")
   with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
-    future_to_path = {
-      executor.submit(check_font, path, quality, args.timeout): path
-      for path, quality in tasks_to_run
-    }
+    active_futures = {}
+    for path, qualities in font_task_chains:
+      first_q = qualities[0]
+      remaining_q = qualities[1:]
+      future = executor.submit(check_font, path, first_q, args.timeout)
+      active_futures[future] = (path, first_q, remaining_q)
 
     processed_count = 0
-    total_fonts = len(tasks_to_run)
-    for future in concurrent.futures.as_completed(future_to_path):
-      path = future_to_path[future]
-      processed_count += 1
-      if processed_count % 100 == 0:
-        print(f"Processed {processed_count}/{total_fonts} fonts...", file=sys.stderr)
+    while active_futures:
+      done, _ = concurrent.futures.wait(
+          active_futures,
+          return_when=concurrent.futures.FIRST_COMPLETED,
+      )
+      for future in done:
+        path, quality, remaining_q = active_futures.pop(future)
 
-      try:
-        result = future.result()
+        try:
+          result = future.result()
+        except subprocess.TimeoutExpired:
+          for q in [quality] + remaining_q:
+            print(f"Timeout occurred for font: {path} at quality level: {q}", file=sys.stderr)
+            processed_count += 1
+            if processed_count % 100 == 0:
+              print(f"Processed {processed_count}/{total_fonts} fonts...", file=sys.stderr)
+          continue
+        except Exception as exc:
+          print(f"{path} generated an exception: {exc}", file=sys.stderr)
+          result = None
+
+        processed_count += 1
+        if processed_count % 100 == 0:
+          print(f"Processed {processed_count}/{total_fonts} fonts...", file=sys.stderr)
+
         if result is not None:
           font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count = result
           print(f"{font_path}; {quality_level}; {ideal_total_cost}; {ift_total_cost}; {non_ift_total_cost}; {total_time}; {codepoint_count}")
 
-      except Exception as exc:
-        print(f"{path} generated an exception: {exc}", file=sys.stderr)
+        if remaining_q:
+          next_q = remaining_q[0]
+          next_future = executor.submit(check_font, path, next_q, args.timeout)
+          active_futures[next_future] = (path, next_q, remaining_q[1:])
 
 if __name__ == "__main__":
   main()
