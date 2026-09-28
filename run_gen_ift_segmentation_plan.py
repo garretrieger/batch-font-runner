@@ -14,6 +14,11 @@ QUALITY_LEVELS = [
     1, 2, 3, 4, 5, 6, 7,
 ]
 
+# Mapping of trial name to a list of additional flags passed to gen_ift_segmentation_plan.
+TRIALS = {
+    "default": [],
+}
+
 
 TIME_PATTERN = re.compile(r"^CodepointToGlyphSegments took: ([0-9.]+) seconds$", re.MULTILINE)
 
@@ -63,13 +68,13 @@ def get_cjk_script_flag(font_path):
 
   return []
 
-def check_font(font_path, quality_level, timeout=None):
+def check_font(font_path, quality_level, trial_name, trial_flags, timeout=None):
   """
-  Runs the gen-segmentation-plan.sh on a single font.
-  Returns a tuple of (font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count)
+  Runs the gen-segmentation-plan.sh on a single font for a given quality level and trial.
+  Returns a tuple of (font_path, quality_level, trial_name, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count)
   """
 
-  extra_args = get_cjk_script_flag(font_path)
+  extra_args = get_cjk_script_flag(font_path) + list(trial_flags)
 
   cmd = [
     "./gen-segmentation-plan.sh",
@@ -99,38 +104,38 @@ def check_font(font_path, quality_level, timeout=None):
         raise
 
       if proc.returncode != 0:
-        print(f"Error processing {font_path}, quality {quality_level}: command line return code {proc.returncode}", file=sys.stderr)
+        print(f"Error processing {font_path}, quality {quality_level}, trial {trial_name}: command line return code {proc.returncode}", file=sys.stderr)
         return None
 
     match = CODEPOINT_COUNT_PATTERN.search(stderr_output)
     if match:
       codepoint_count = int(match.group(1))
     else:
-      print(f"Error processing {font_path}: total cost not found in output", file=sys.stderr)
+      print(f"Error processing {font_path}, quality {quality_level}, trial {trial_name}: total cost not found in output", file=sys.stderr)
 
     match = IDEAL_COST_PATTERN.search(stderr_output)
     if match:
       ideal_total_cost = int(match.group(1))
     else:
-      print(f"Error processing {font_path}: total cost not found in output", file=sys.stderr)
+      print(f"Error processing {font_path}, quality {quality_level}, trial {trial_name}: total cost not found in output", file=sys.stderr)
 
     match = IFT_COST_PATTERN.search(stderr_output)
     if match:
       ift_total_cost = int(match.group(1))
     else:
-      print(f"Error processing {font_path}: total cost not found in output", file=sys.stderr)
+      print(f"Error processing {font_path}, quality {quality_level}, trial {trial_name}: total cost not found in output", file=sys.stderr)
 
     match = NON_IFT_COST_PATTERN.search(stderr_output)
     if match:
       non_ift_total_cost = int(match.group(1))
     else:
-      print(f"Error processing {font_path}: total cost not found in output", file=sys.stderr)
+      print(f"Error processing {font_path}, quality {quality_level}, trial {trial_name}: total cost not found in output", file=sys.stderr)
 
     match = TIME_PATTERN.search(stderr_output)
     if match:
       total_time = float(match.group(1))
     else:
-      print(f"Error processing {font_path}: total time not found in output", file=sys.stderr)
+      print(f"Error processing {font_path}, quality {quality_level}, trial {trial_name}: total time not found in output", file=sys.stderr)
 
   except subprocess.TimeoutExpired:
     raise
@@ -138,17 +143,17 @@ def check_font(font_path, quality_level, timeout=None):
     print(f"Error: segmenter executable not found at './gen-segmentation-plan.sh'.", file=sys.stderr)
     sys.exit(1)
   except Exception as e:
-    print(f"Error processing {font_path}: {e} {traceback.format_exc()}", file=sys.stderr)
+    print(f"Error processing {font_path}, quality {quality_level}, trial {trial_name}: {e} {traceback.format_exc()}", file=sys.stderr)
     return None
 
-  return font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count
+  return font_path, quality_level, trial_name, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count
 
 def main():
   parser = argparse.ArgumentParser(description="Coordinate running the gen_ift_segmentation_plan utility across a collection of fonts.")
   parser.add_argument("input_file", help="Text file with one font file path per line.")
   parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 4, help="Number of concurrent executions (default: number of CPUs).")
   parser.add_argument("-t", "--timeout", type=float, help="Timeout in seconds for each execution.")
-  parser.add_argument("-r", "--resume", help="Path to a previous stdout log file to resume from. Skips already processed font/quality pairs.")
+  parser.add_argument("-r", "--resume", help="Path to a previous stdout log file to resume from. Skips already processed font/quality/trial tuples.")
 
   args = parser.parse_args()
 
@@ -169,11 +174,12 @@ def main():
       with open(args.resume, 'r') as f:
         for line in f:
           parts = [p.strip() for p in line.split(';')]
-          if len(parts) >= 2 and parts[0] != "font_path":
+          if len(parts) >= 3 and parts[0] != "font_path":
             try:
               font_path = parts[0]
               quality_level = int(parts[1])
-              skip_set.add((font_path, quality_level))
+              trial_name = parts[2]
+              skip_set.add((font_path, quality_level, trial_name))
             except ValueError:
               pass
     else:
@@ -187,19 +193,20 @@ def main():
   font_task_chains = []
   total_fonts = 0
   for path in font_paths:
-    qualities = [q for q in QUALITY_LEVELS if (path, q) not in skip_set]
-    if qualities:
-      font_task_chains.append((path, qualities))
-      total_fonts += len(qualities)
+    for trial_name, trial_flags in TRIALS.items():
+      qualities = [q for q in QUALITY_LEVELS if (path, q, trial_name) not in skip_set]
+      if qualities:
+        font_task_chains.append((path, trial_name, trial_flags, qualities))
+        total_fonts += len(qualities)
 
-  print("font_path; quality_level; ideal_total_cost; ift_total_cost; non_ift_total_cost; total_time_s; codepoint_count")
+  print("font_path; quality_level; trial; ideal_total_cost; ift_total_cost; non_ift_total_cost; total_time_s; codepoint_count")
   with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
     active_futures = {}
-    for path, qualities in font_task_chains:
+    for path, trial_name, trial_flags, qualities in font_task_chains:
       first_q = qualities[0]
       remaining_q = qualities[1:]
-      future = executor.submit(check_font, path, first_q, args.timeout)
-      active_futures[future] = (path, first_q, remaining_q)
+      future = executor.submit(check_font, path, first_q, trial_name, trial_flags, args.timeout)
+      active_futures[future] = (path, first_q, trial_name, trial_flags, remaining_q)
 
     processed_count = 0
     while active_futures:
@@ -208,19 +215,19 @@ def main():
           return_when=concurrent.futures.FIRST_COMPLETED,
       )
       for future in done:
-        path, quality, remaining_q = active_futures.pop(future)
+        path, quality, trial_name, trial_flags, remaining_q = active_futures.pop(future)
 
         try:
           result = future.result()
         except subprocess.TimeoutExpired:
           for q in [quality] + remaining_q:
-            print(f"Timeout occurred for font: {path} at quality level: {q}", file=sys.stderr)
+            print(f"Timeout occurred for font: {path}, trial: {trial_name} at quality level: {q}", file=sys.stderr)
             processed_count += 1
             if processed_count % 100 == 0:
               print(f"Processed {processed_count}/{total_fonts} fonts...", file=sys.stderr)
           continue
         except Exception as exc:
-          print(f"{path} generated an exception: {exc}", file=sys.stderr)
+          print(f"{path}, quality {quality}, trial {trial_name} generated an exception: {exc}", file=sys.stderr)
           result = None
 
         processed_count += 1
@@ -228,13 +235,13 @@ def main():
           print(f"Processed {processed_count}/{total_fonts} fonts...", file=sys.stderr)
 
         if result is not None:
-          font_path, quality_level, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count = result
-          print(f"{font_path}; {quality_level}; {ideal_total_cost}; {ift_total_cost}; {non_ift_total_cost}; {total_time}; {codepoint_count}")
+          font_path, quality_level, trial_name, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count = result
+          print(f"{font_path}; {quality_level}; {trial_name}; {ideal_total_cost}; {ift_total_cost}; {non_ift_total_cost}; {total_time}; {codepoint_count}")
 
         if remaining_q:
           next_q = remaining_q[0]
-          next_future = executor.submit(check_font, path, next_q, args.timeout)
-          active_futures[next_future] = (path, next_q, remaining_q[1:])
+          next_future = executor.submit(check_font, path, next_q, trial_name, trial_flags, args.timeout)
+          active_futures[next_future] = (path, next_q, trial_name, trial_flags, remaining_q[1:])
 
 if __name__ == "__main__":
   main()
