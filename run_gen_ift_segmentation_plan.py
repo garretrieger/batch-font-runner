@@ -16,9 +16,10 @@ QUALITY_LEVELS = [
 
 # Mapping of trial name to a list of additional flags passed to gen_ift_segmentation_plan.
 TRIALS = {
-    "default": [],
+    "experiment": [
+        "--auto_config_primary_script=Script_CJK",
+    ],
 }
-
 
 TIME_PATTERN = re.compile(r"^CodepointToGlyphSegments took: ([0-9.]+) seconds$", re.MULTILINE)
 
@@ -27,7 +28,7 @@ IDEAL_COST_PATTERN = re.compile(r"^ideal_total_cost = ([0-9]+)$", re.MULTILINE)
 IFT_COST_PATTERN = re.compile(r"^ift_total_cost = ([0-9]+)$", re.MULTILINE)
 NON_IFT_COST_PATTERN = re.compile(r"^non_ift_total_cost = ([0-9]+)$", re.MULTILINE)
 
-def get_cjk_script_flag(font_path):
+def get_cjk_script_flag(font_path, trial_flags):
   """
   Checks METADATA.pb for CJK subsets and returns the appropriate flag if applicable.
   """
@@ -53,6 +54,18 @@ def get_cjk_script_flag(font_path):
   target_subsets = {"chinese-simplified", "chinese-hongkong", "chinese-traditional", "japanese", "korean"}
   found_target_subsets = [s for s in subsets if s in target_subsets]
 
+  if len(found_target_subsets) == 0 and "--cjk_only" in trial_flags:
+    return ["SKIP"]
+
+  if "--auto_config_primary_script=Script_CJK" in trial_flags:
+    if len(found_target_subsets) == 0:
+      return []
+    else:
+      return ["--auto_config_primary_script=Script_CJK"]
+
+  if "--noauto_config_primary_script" in trial_flags:
+    return []
+
   if len(found_target_subsets) == 1:
     subset = found_target_subsets[0]
     script_map = {
@@ -74,7 +87,8 @@ def check_font(font_path, quality_level, trial_name, trial_flags, timeout=None):
   Returns a tuple of (font_path, quality_level, trial_name, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count)
   """
 
-  extra_args = get_cjk_script_flag(font_path) + list(trial_flags)
+  extra_args = (get_cjk_script_flag(font_path, trial_flags) +
+                list([flag for flag in trial_flags if flag != "--noauto_config_primary_script" and flag != "--cjk_only" and flag != "--auto_config_primary_script=Script_CJK"]))
 
   cmd = [
     "./gen-segmentation-plan.sh",
@@ -205,6 +219,10 @@ def main():
     for path, trial_name, trial_flags, qualities in font_task_chains:
       first_q = qualities[0]
       remaining_q = qualities[1:]
+
+      if "SKIP" in get_cjk_script_flag(path, trial_flags):
+        continue
+
       future = executor.submit(check_font, path, first_q, trial_name, trial_flags, args.timeout)
       active_futures[future] = (path, first_q, trial_name, trial_flags, remaining_q)
 
