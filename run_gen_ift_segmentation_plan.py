@@ -16,8 +16,7 @@ QUALITY_LEVELS = [
 
 # Mapping of trial name to a list of additional flags passed to gen_ift_segmentation_plan.
 TRIALS = {
-    "experiment": [
-        "--auto_config_primary_script=Script_CJK",
+    "control": [
     ],
 }
 
@@ -27,6 +26,7 @@ CODEPOINT_COUNT_PATTERN = re.compile(r"^number_of_codepoints = ([0-9]+)$", re.MU
 IDEAL_COST_PATTERN = re.compile(r"^ideal_total_cost = ([0-9]+)$", re.MULTILINE)
 IFT_COST_PATTERN = re.compile(r"^ift_total_cost = ([0-9]+)$", re.MULTILINE)
 NON_IFT_COST_PATTERN = re.compile(r"^non_ift_total_cost = ([0-9]+)$", re.MULTILINE)
+UNCOVERED_IFT_PATCH_COST_PATTERN = re.compile(r"^uncovered_ift_patch_cost = ([0-9]+)$", re.MULTILINE)
 
 def get_cjk_script_flag(font_path, trial_flags):
   """
@@ -84,7 +84,7 @@ def get_cjk_script_flag(font_path, trial_flags):
 def check_font(font_path, quality_level, trial_name, trial_flags, timeout=None):
   """
   Runs the gen-segmentation-plan.sh on a single font for a given quality level and trial.
-  Returns a tuple of (font_path, quality_level, trial_name, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count)
+  Returns a tuple of (font_path, quality_level, trial_name, ideal_total_cost, ift_total_cost, non_ift_total_cost, uncovered_ift_patch_cost, total_time, codepoint_count)
   """
 
   extra_args = (get_cjk_script_flag(font_path, trial_flags) +
@@ -145,6 +145,12 @@ def check_font(font_path, quality_level, trial_name, trial_flags, timeout=None):
     else:
       print(f"Error processing {font_path}, quality {quality_level}, trial {trial_name}: total cost not found in output", file=sys.stderr)
 
+    match = UNCOVERED_IFT_PATCH_COST_PATTERN.search(stderr_output)
+    if match:
+      uncovered_ift_patch_cost = int(match.group(1))
+    else:
+      print(f"Error processing {font_path}, quality {quality_level}, trial {trial_name}: uncovered ift patch cost not found in output", file=sys.stderr)
+
     match = TIME_PATTERN.search(stderr_output)
     if match:
       total_time = float(match.group(1))
@@ -160,7 +166,7 @@ def check_font(font_path, quality_level, trial_name, trial_flags, timeout=None):
     print(f"Error processing {font_path}, quality {quality_level}, trial {trial_name}: {e} {traceback.format_exc()}", file=sys.stderr)
     return None
 
-  return font_path, quality_level, trial_name, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count
+  return font_path, quality_level, trial_name, ideal_total_cost, ift_total_cost, non_ift_total_cost, uncovered_ift_patch_cost, total_time, codepoint_count
 
 def main():
   parser = argparse.ArgumentParser(description="Coordinate running the gen_ift_segmentation_plan utility across a collection of fonts.")
@@ -213,7 +219,7 @@ def main():
         font_task_chains.append((path, trial_name, trial_flags, qualities))
         total_fonts += len(qualities)
 
-  print("font_path; quality_level; trial; ideal_total_cost; ift_total_cost; non_ift_total_cost; total_time_s; codepoint_count")
+  print("font_path; quality_level; trial; ideal_total_cost; ift_total_cost; non_ift_total_cost; uncovered_ift_patch_cost; total_time_s; codepoint_count")
   with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as executor:
     active_futures = {}
     for path, trial_name, trial_flags, qualities in font_task_chains:
@@ -253,8 +259,8 @@ def main():
           print(f"Processed {processed_count}/{total_fonts} fonts...", file=sys.stderr)
 
         if result is not None:
-          font_path, quality_level, trial_name, ideal_total_cost, ift_total_cost, non_ift_total_cost, total_time, codepoint_count = result
-          print(f"{font_path}; {quality_level}; {trial_name}; {ideal_total_cost}; {ift_total_cost}; {non_ift_total_cost}; {total_time}; {codepoint_count}")
+          font_path, quality_level, trial_name, ideal_total_cost, ift_total_cost, non_ift_total_cost, uncovered_ift_patch_cost, total_time, codepoint_count = result
+          print(f"{font_path}; {quality_level}; {trial_name}; {ideal_total_cost}; {ift_total_cost}; {non_ift_total_cost}; {uncovered_ift_patch_cost}; {total_time}; {codepoint_count}")
 
         if remaining_q:
           next_q = remaining_q[0]
