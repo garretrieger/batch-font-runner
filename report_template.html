@@ -101,6 +101,7 @@
       .lg\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .lg\:grid-cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
       .lg\:grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+      .lg\:grid-cols-7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
       .lg\:flex-row { flex-direction: row; }
       .lg\:items-center { align-items: center; }
     }
@@ -125,6 +126,7 @@
     .border { border: 1px solid var(--border); }
     .border-b { border-bottom: 1px solid var(--border); }
     .border-t { border-top: 1px solid var(--border); }
+    .border-r { border-right: 1px solid var(--border); }
     .border-\[var\(--border\)\] { border-color: var(--border); }
     .divide-y > * + * { border-top: 1px solid var(--border); }
     .rounded { border-radius: 0.25rem; }
@@ -177,10 +179,12 @@
     .bg-rose-500 { background-color: #f43f5e; }
     .bg-slate-400 { background-color: #94a3b8; }
     .bg-emerald-500\/20 { background-color: rgba(16, 185, 129, 0.2); }
+    .bg-sky-500\/20 { background-color: rgba(14, 165, 233, 0.2); }
     .bg-rose-500\/20 { background-color: rgba(244, 63, 94, 0.2); }
     .bg-amber-500\/20 { background-color: rgba(245, 158, 11, 0.2); }
     .bg-slate-500\/20 { background-color: rgba(100, 116, 139, 0.2); }
     .border-emerald-500\/30 { border-color: rgba(16, 185, 129, 0.3); }
+    .border-sky-500\/30 { border-color: rgba(14, 165, 233, 0.3); }
     .border-rose-500\/30 { border-color: rgba(244, 63, 94, 0.3); }
     .border-amber-500\/30 { border-color: rgba(245, 158, 11, 0.3); }
     .border-slate-500\/30 { border-color: rgba(100, 116, 139, 0.3); }
@@ -276,13 +280,14 @@
   <div id="timeouts-section" class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
     <div id="timeouts-header" class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4"></div>
     <div id="per-q-table-container"></div>
-    <div id="timeout-filter-buttons" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-4 text-xs"></div>
+    <div id="timeout-filter-buttons" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 mb-4 text-xs"></div>
     <div class="overflow-x-auto max-h-96 overflow-y-auto border border-[var(--border)] rounded">
       <table class="w-full text-xs text-left border-collapse">
         <thead class="sticky top-0 bg-[var(--card)]">
           <tr class="border-b border-[var(--border)] text-[var(--muted-foreground)]">
             <th class="py-2 px-2">Font Name</th>
             <th class="py-2 px-2 text-right">Quality</th>
+            <th class="py-2 px-2">Type</th>
             <th class="py-2 px-2">Status Change</th>
             <th class="py-2 px-2">Control Status</th>
             <th class="py-2 px-2">Candidate Status</th>
@@ -478,6 +483,8 @@
 
       const toColor = to.diff_count < 0 ? 'text-emerald-500' : (to.diff_count > 0 ? 'text-rose-500' : 'text-amber-400');
       const toSign = to.diff_count > 0 ? '+' : '';
+      const errColor = (to.diff_error_count || 0) < 0 ? 'text-emerald-500' : ((to.diff_error_count || 0) > 0 ? 'text-rose-500' : 'text-amber-400');
+      const errSign = (to.diff_error_count || 0) > 0 ? '+' : '';
 
       document.getElementById('header-container').innerHTML = `
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -526,12 +533,21 @@
               <div class="text-[11px] text-[var(--muted-foreground)]">${(u.control_sum/1e6).toFixed(2)}M &rarr; ${(u.candidate_sum/1e6).toFixed(2)}M</div>
             </div>
             <a href="#timeouts-section" class="px-4 py-2.5 rounded-lg bg-[var(--background)] border border-[var(--border)] text-right hover:border-sky-500 transition block">
-              <div class="text-xs text-[var(--muted-foreground)]">Timeouts &amp; Errors</div>
+              <div class="text-xs text-[var(--muted-foreground)]">Timeouts</div>
               <div class="text-lg font-bold ${toColor}">
                 ${to.control_count} &rarr; ${to.candidate_count} (${toSign}${to.diff_count})
               </div>
               <div class="text-[11px] text-[var(--muted-foreground)]">
                 ${to.resolved_count} resolved &bull; ${to.new_count} new
+              </div>
+            </a>
+            <a href="#timeouts-section" class="px-4 py-2.5 rounded-lg bg-[var(--background)] border border-[var(--border)] text-right hover:border-sky-500 transition block">
+              <div class="text-xs text-[var(--muted-foreground)]">Errors</div>
+              <div class="text-lg font-bold ${errColor}">
+                ${to.control_error_count || 0} &rarr; ${to.candidate_error_count || 0} (${errSign}${to.diff_error_count || 0})
+              </div>
+              <div class="text-[11px] text-[var(--muted-foreground)]">
+                ${to.resolved_error_count || 0} resolved &bull; ${to.new_error_count || 0} new
               </div>
             </a>
           </div>
@@ -590,12 +606,12 @@
           </div>
         </div>
         <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
-          <div class="text-xs text-[var(--muted-foreground)] font-medium">Timeouts &amp; Errors (error_log.txt)</div>
+          <div class="text-xs text-[var(--muted-foreground)] font-medium">Timeouts (${toSign}${to.diff_count}) &amp; Errors (${errSign}${to.diff_error_count || 0})</div>
           <div class="text-2xl font-bold mt-1 ${toColor}">
-            ${to.candidate_count} <span class="text-sm font-normal text-[var(--muted-foreground)]">(${toSign}${to.diff_count} vs ctrl)</span>
+            ${to.candidate_count} <span class="text-sm font-normal text-[var(--muted-foreground)]">timeouts (${toSign}${to.diff_count})</span>
           </div>
           <div class="text-xs text-[var(--muted-foreground)] mt-1">
-            ${to.resolved_count} resolved &bull; ${to.new_count} new &bull; ${to.persistent_count} persist
+            Errors: <span class="font-bold ${errColor}">${to.candidate_error_count || 0}</span> (${errSign}${to.diff_error_count || 0} vs ctrl) &bull; ${to.resolved_error_count || 0} res / ${to.new_error_count || 0} new
           </div>
         </div>
       `;
@@ -681,8 +697,8 @@
           <div class="px-3 py-1.5 rounded bg-[var(--background)] border border-[var(--border)]" title="Fonts that timed out at >= 1 quality level">
             Fonts w/ Any Timeout: <span class="font-mono font-bold">${to.control_fonts_any} &rarr; ${to.candidate_fonts_any} (${to.diff_fonts_any >= 0 ? '+' : ''}${to.diff_fonts_any})</span>
           </div>
-          <div class="px-3 py-1.5 rounded bg-[var(--background)] border border-[var(--border)]" title="Fonts that timed out at all quality levels">
-            Fonts w/ All Timeouts: <span class="font-mono font-bold">${to.control_fonts_all} &rarr; ${to.candidate_fonts_all} (${to.diff_fonts_all >= 0 ? '+' : ''}${to.diff_fonts_all})</span>
+          <div class="px-3 py-1.5 rounded bg-[var(--background)] border border-[var(--border)]" title="Fonts that had non-timeout errors at >= 1 quality level">
+            Fonts w/ Any Error: <span class="font-mono font-bold">${to.control_error_fonts_any || 0} &rarr; ${to.candidate_error_fonts_any || 0} (${(to.diff_error_fonts_any || 0) >= 0 ? '+' : ''}${to.diff_error_fonts_any || 0})</span>
           </div>
         `;
       }
@@ -696,13 +712,10 @@
         </div>
         <div class="flex flex-wrap gap-3 text-xs">
           <div class="px-3 py-1.5 rounded bg-[var(--background)] border border-[var(--border)]">
-            Control (Font, Q) Timeouts: <span class="font-mono font-bold">${to.control_count}</span>
+            Timeouts: <span class="font-mono font-bold">${to.control_count} &rarr; ${to.candidate_count} (<span class="${toColor}">${toSign}${to.diff_count}</span>)</span>
           </div>
           <div class="px-3 py-1.5 rounded bg-[var(--background)] border border-[var(--border)]">
-            Candidate (Font, Q) Timeouts: <span class="font-mono font-bold">${to.candidate_count}</span>
-          </div>
-          <div class="px-3 py-1.5 rounded bg-[var(--background)] border border-[var(--border)]">
-            Net Change: <span class="font-mono font-bold ${toColor}">${toSign}${to.diff_count}</span>
+            Errors: <span class="font-mono font-bold">${to.control_error_count || 0} &rarr; ${to.candidate_error_count || 0} (<span class="${errColor}">${errSign}${to.diff_error_count || 0}</span>)</span>
           </div>
           ${distinctToHtml}
         </div>
@@ -713,13 +726,20 @@
         const rows = to.per_quality.map(pq => `
           <tr>
             <td class="py-1.5 px-3 font-semibold">Quality ${pq.quality_level}</td>
-            <td class="py-1.5 px-3 text-right">${pq.control_count}</td>
-            <td class="py-1.5 px-3 text-right">${pq.candidate_count}</td>
-            <td class="py-1.5 px-3 text-right font-bold ${pq.diff_count < 0 ? 'text-emerald-500' : (pq.diff_count > 0 ? 'text-rose-500' : '')}">${pq.diff_count >= 0 ? '+' : ''}${pq.diff_count}</td>
-            <td class="py-1.5 px-3 text-right text-emerald-400">${pq.resolved_count}</td>
-            <td class="py-1.5 px-3 text-right text-rose-400">${pq.new_count}</td>
-            <td class="py-1.5 px-3 text-right text-amber-400">${pq.persistent_count}</td>
-            <td class="py-1.5 px-3 text-right text-slate-400">${pq.missing_count || 0}</td>
+            <td class="py-1.5 px-2 text-right">${pq.control_count}</td>
+            <td class="py-1.5 px-2 text-right">${pq.candidate_count}</td>
+            <td class="py-1.5 px-2 text-right font-bold ${pq.diff_count < 0 ? 'text-emerald-500' : (pq.diff_count > 0 ? 'text-rose-500' : '')}">${pq.diff_count >= 0 ? '+' : ''}${pq.diff_count}</td>
+            <td class="py-1.5 px-2 text-right text-emerald-400">${pq.resolved_count}</td>
+            <td class="py-1.5 px-2 text-right text-rose-400">${pq.new_count}</td>
+            <td class="py-1.5 px-2 text-right text-amber-400">${pq.persistent_count}</td>
+            <td class="py-1.5 px-2 text-right text-slate-400 border-r border-[var(--border)]">${pq.missing_count || 0}</td>
+            <td class="py-1.5 px-2 text-right">${pq.control_error_count || 0}</td>
+            <td class="py-1.5 px-2 text-right">${pq.candidate_error_count || 0}</td>
+            <td class="py-1.5 px-2 text-right font-bold ${(pq.diff_error_count || 0) < 0 ? 'text-emerald-500' : ((pq.diff_error_count || 0) > 0 ? 'text-rose-500' : '')}">${(pq.diff_error_count || 0) >= 0 ? '+' : ''}${pq.diff_error_count || 0}</td>
+            <td class="py-1.5 px-2 text-right text-emerald-400">${pq.resolved_error_count || 0}</td>
+            <td class="py-1.5 px-2 text-right text-rose-400">${pq.new_error_count || 0}</td>
+            <td class="py-1.5 px-2 text-right text-amber-400">${pq.persistent_error_count || 0}</td>
+            <td class="py-1.5 px-2 text-right text-slate-400">${pq.missing_error_count || 0}</td>
           </tr>
         `).join('');
         document.getElementById('per-q-table-container').innerHTML = `
@@ -727,14 +747,21 @@
             <table class="w-full text-xs text-left border-collapse border border-[var(--border)] rounded font-mono">
               <thead>
                 <tr class="bg-[var(--background)] border-b border-[var(--border)] text-[var(--muted-foreground)]">
-                  <th class="py-1.5 px-3">Quality Level</th>
-                  <th class="py-1.5 px-3 text-right">Control Timeouts</th>
-                  <th class="py-1.5 px-3 text-right">Candidate Timeouts</th>
-                  <th class="py-1.5 px-3 text-right">Net Change</th>
-                  <th class="py-1.5 px-3 text-right text-emerald-400">Resolved</th>
-                  <th class="py-1.5 px-3 text-right text-rose-400">New</th>
-                  <th class="py-1.5 px-3 text-right text-amber-400">Persistent</th>
-                  <th class="py-1.5 px-3 text-right text-slate-400">Missing Data</th>
+                  <th class="py-1.5 px-3">Quality</th>
+                  <th class="py-1.5 px-2 text-right">Ctrl T/O</th>
+                  <th class="py-1.5 px-2 text-right">Cand T/O</th>
+                  <th class="py-1.5 px-2 text-right">T/O &Delta;</th>
+                  <th class="py-1.5 px-2 text-right text-emerald-400">T/O Res</th>
+                  <th class="py-1.5 px-2 text-right text-rose-400">T/O New</th>
+                  <th class="py-1.5 px-2 text-right text-amber-400">T/O Per</th>
+                  <th class="py-1.5 px-2 text-right text-slate-400 border-r border-[var(--border)]">T/O Mis</th>
+                  <th class="py-1.5 px-2 text-right">Ctrl Err</th>
+                  <th class="py-1.5 px-2 text-right">Cand Err</th>
+                  <th class="py-1.5 px-2 text-right">Err &Delta;</th>
+                  <th class="py-1.5 px-2 text-right text-emerald-400">Err Res</th>
+                  <th class="py-1.5 px-2 text-right text-rose-400">Err New</th>
+                  <th class="py-1.5 px-2 text-right text-amber-400">Err Per</th>
+                  <th class="py-1.5 px-2 text-right text-slate-400">Err Mis</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-[var(--border)]">${rows}</tbody>
@@ -744,25 +771,41 @@
       }
 
       // Timeout Filter Buttons
+      const totalAll = to.rows.length;
+      const totalToOnly = to.rows.filter(r => r.category === 'TIMEOUT').length;
+      const totalErrOnly = to.rows.filter(r => r.category === 'ERROR').length;
+      const totalResolved = to.resolved_count + (to.resolved_error_count || 0);
+      const totalNew = to.new_count + (to.new_error_count || 0);
+      const totalPersistent = to.persistent_count + (to.persistent_error_count || 0);
+      const totalMissing = (to.missing_count || 0) + (to.missing_error_count || 0);
+
       document.getElementById('timeout-filter-buttons').innerHTML = `
         <button onclick="filterTimeouts('all')" class="p-3 text-left rounded-lg bg-[var(--background)] border border-[var(--border)] hover:border-sky-500 transition">
-          <div class="font-semibold">Show All (${to.rows.length})</div>
-          <div class="text-[var(--muted-foreground)] mt-0.5">All timeout/error occurrences</div>
+          <div class="font-semibold">Show All (${totalAll})</div>
+          <div class="text-[var(--muted-foreground)] mt-0.5">All timeout &amp; error runs</div>
+        </button>
+        <button onclick="filterTimeouts('timeouts_only')" class="p-3 text-left rounded-lg bg-[var(--background)] border border-[var(--border)] hover:border-sky-500 transition">
+          <div class="font-semibold text-sky-400">Timeouts Only (${totalToOnly})</div>
+          <div class="text-[var(--muted-foreground)] mt-0.5">Timeouts &amp; SIGTERM</div>
+        </button>
+        <button onclick="filterTimeouts('errors_only')" class="p-3 text-left rounded-lg bg-[var(--background)] border border-[var(--border)] hover:border-rose-500 transition">
+          <div class="font-semibold text-rose-400">Errors Only (${totalErrOnly})</div>
+          <div class="text-[var(--muted-foreground)] mt-0.5">Exit codes &amp; exceptions</div>
         </button>
         <button onclick="filterTimeouts('resolved')" class="p-3 text-left rounded-lg bg-[var(--background)] border border-[var(--border)] hover:border-emerald-500 transition">
-          <div class="font-semibold text-emerald-400">Resolved (${to.resolved_count})</div>
-          <div class="text-[var(--muted-foreground)] mt-0.5">Timed out in control, completed in candidate</div>
+          <div class="font-semibold text-emerald-400">Resolved (${totalResolved})</div>
+          <div class="text-[var(--muted-foreground)] mt-0.5">Failed in control, completed in cand</div>
         </button>
         <button onclick="filterTimeouts('new')" class="p-3 text-left rounded-lg bg-[var(--background)] border border-[var(--border)] hover:border-rose-500 transition">
-          <div class="font-semibold text-rose-400">New Timeouts (${to.new_count})</div>
-          <div class="text-[var(--muted-foreground)] mt-0.5">Completed in control, timed out in candidate</div>
+          <div class="font-semibold text-rose-400">New Failures (${totalNew})</div>
+          <div class="text-[var(--muted-foreground)] mt-0.5">Completed in ctrl, failed in cand</div>
         </button>
         <button onclick="filterTimeouts('persistent')" class="p-3 text-left rounded-lg bg-[var(--background)] border border-[var(--border)] hover:border-amber-500 transition">
-          <div class="font-semibold text-amber-400">Persistent (${to.persistent_count})</div>
-          <div class="text-[var(--muted-foreground)] mt-0.5">Timed out in both trials</div>
+          <div class="font-semibold text-amber-400">Persistent (${totalPersistent})</div>
+          <div class="text-[var(--muted-foreground)] mt-0.5">Failed in both trials</div>
         </button>
         <button onclick="filterTimeouts('missing')" class="p-3 text-left rounded-lg bg-[var(--background)] border border-[var(--border)] hover:border-slate-400 transition">
-          <div class="font-semibold text-slate-400">Missing Data (${to.missing_count || 0})</div>
+          <div class="font-semibold text-slate-400">Missing Data (${totalMissing})</div>
           <div class="text-[var(--muted-foreground)] mt-0.5">Failed in one trial, missing in other</div>
         </button>
       `;
@@ -798,16 +841,21 @@
       const rows = DATA.timeout_rows.filter(r => {
         if (currentTimeoutFilter === 'all') return true;
         if (currentTimeoutFilter === 'non_persistent') return r.status_key !== 'persistent';
+        if (currentTimeoutFilter === 'timeouts_only') return r.category === 'TIMEOUT';
+        if (currentTimeoutFilter === 'errors_only') return r.category === 'ERROR';
         return r.status_key === currentTimeoutFilter;
       });
       if (rows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" class="py-3 px-2 text-center text-[var(--muted-foreground)] italic">No matching timeout records for this filter.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="py-3 px-2 text-center text-[var(--muted-foreground)] italic">No matching records for this filter.</td></tr>`;
         return;
       }
       tbody.innerHTML = rows.map(r => `
         <tr class="hover:bg-[var(--background)]">
           <td class="py-1.5 px-2 font-mono font-medium" title="${esc(r.font_path)}">${esc(r.font_name)}</td>
           <td class="py-1.5 px-2 text-right font-mono">Q${r.q}</td>
+          <td class="py-1.5 px-2 font-mono text-xs">
+            <span class="px-1.5 py-0.5 rounded text-[10px] ${r.category === 'TIMEOUT' ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'}">${esc(r.category || 'TIMEOUT')}</span>
+          </td>
           <td class="py-1.5 px-2">
             <span class="px-2 py-0.5 rounded text-[10px] font-semibold border ${esc(r.status_badge)}">${esc(r.status)}</span>
           </td>
