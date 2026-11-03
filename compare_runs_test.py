@@ -346,9 +346,79 @@ class RecordSelectionAndReportTest(unittest.TestCase):
 
         status_by_font = {r.font_path: r.status for r in to.rows}
         self.assertEqual(status_by_font["/fonts/B.ttf"], "RESOLVED")
-        self.assertEqual(status_by_font["/fonts/A.ttf"], "NEW TIMEOUT/ERROR")
+        self.assertEqual(status_by_font["/fonts/A.ttf"], "NEW TIMEOUT")
         self.assertEqual(status_by_font["/fonts/E.ttf"], "MISSING DATA")
         self.assertEqual(status_by_font["/fonts/F.ttf"], "MISSING DATA")
+
+    def test_separate_timeouts_and_errors_counts_and_columns(self):
+        # Font T: timeout in control at Q1, candidate completes -> RESOLVED timeout
+        # Font E: exit code 127 in control at Q1, candidate completes -> RESOLVED error
+        # Font N: completes in control at Q1, candidate exit code 1 in Q1 -> NEW error
+        data = {
+            "control": {
+                "/fonts/M.ttf": {1: RunRecord("M.ttf", "/fonts/M.ttf", 1, "control", 50, 100, 150, 0, 1.0, 100)},
+                "/fonts/N.ttf": {1: RunRecord("N.ttf", "/fonts/N.ttf", 1, "control", 50, 100, 150, 0, 1.0, 100)},
+                "/fonts/T.ttf": {},
+                "/fonts/E.ttf": {},
+            },
+            "candidate": {
+                "/fonts/M.ttf": {1: RunRecord("M.ttf", "/fonts/M.ttf", 1, "candidate", 50, 100, 150, 0, 1.0, 100)},
+                "/fonts/T.ttf": {1: RunRecord("T.ttf", "/fonts/T.ttf", 1, "candidate", 50, 100, 150, 0, 1.0, 100)},
+                "/fonts/E.ttf": {1: RunRecord("E.ttf", "/fonts/E.ttf", 1, "candidate", 50, 100, 150, 0, 1.0, 100)},
+                "/fonts/N.ttf": {},
+            },
+        }
+        errors = {
+            "control": {
+                "/fonts/T.ttf": {1: ErrorRecord("/fonts/T.ttf", "T.ttf", "control", 1, "TIMEOUT", "Timeout occurred", "raw")},
+                "/fonts/E.ttf": {1: ErrorRecord("/fonts/E.ttf", "E.ttf", "control", 1, "ERROR", "command line return code 127", "raw")},
+            },
+            "candidate": {
+                "/fonts/N.ttf": {1: ErrorRecord("/fonts/N.ttf", "N.ttf", "candidate", 1, "ERROR", "command line return code 1", "raw")},
+            },
+        }
+        to = analyze_timeouts(errors, data, "control", "candidate", [1], quality_filter=1)
+        # Timeouts: Control 1 (T), Candidate 0
+        self.assertEqual(to.control_count, 1)
+        self.assertEqual(to.candidate_count, 0)
+        self.assertEqual(to.diff_count, -1)
+        self.assertEqual(to.resolved_count, 1)  # T resolved
+        self.assertEqual(to.new_count, 0)
+
+        # Errors: Control 1 (E), Candidate 1 (N)
+        self.assertEqual(to.control_error_count, 1)
+        self.assertEqual(to.candidate_error_count, 1)
+        self.assertEqual(to.diff_error_count, 0)
+        self.assertEqual(to.resolved_error_count, 1)  # E resolved
+        self.assertEqual(to.new_error_count, 1)       # N new
+
+        # Check per-quality summary
+        pq = to.per_quality[0]
+        self.assertEqual(pq.control_count, 1)
+        self.assertEqual(pq.candidate_count, 0)
+        self.assertEqual(pq.control_error_count, 1)
+        self.assertEqual(pq.candidate_error_count, 1)
+
+        # Check rows
+        status_map = {r.font_path: (r.category, r.status) for r in to.rows}
+        self.assertEqual(status_map["/fonts/T.ttf"], ("TIMEOUT", "RESOLVED"))
+        self.assertEqual(status_map["/fonts/E.ttf"], ("ERROR", "RESOLVED"))
+        self.assertEqual(status_map["/fonts/N.ttf"], ("ERROR", "NEW ERROR"))
+
+        # Build report and check rendering
+        rep = build_report("test_err_sep", "", data, errors, [1], "control", "candidate", quality_filter=1)
+        txt = render_text_report(rep)
+        self.assertIn("Timeouts:                    1  ->        0", txt)
+        self.assertIn("Errors:                      1  ->        1", txt)
+        self.assertIn("[TIMEOUT - RESOLVED      ]", txt)
+        self.assertIn("[ERROR - RESOLVED      ]", txt)
+        self.assertIn("[ERROR - NEW ERROR     ]", txt)
+
+        html = render_html_report(rep)
+        self.assertIn("Ctrl T/O", html)
+        self.assertIn("Ctrl Err", html)
+        self.assertIn("Timeouts Only", html)
+        self.assertIn("Errors Only", html)
 
     def test_uncovered_cost_zero_to_positive_and_all_zero_na(self):
         # Test font going from 0 uncovered to 50 uncovered

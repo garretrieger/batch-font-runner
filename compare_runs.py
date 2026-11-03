@@ -200,6 +200,10 @@ class ErrorRecord:
     detail: str
     raw: str
 
+    @property
+    def is_timeout(self) -> bool:
+        return self.error_type.startswith("TIMEOUT")
+
 
 @dataclass(frozen=True)
 class MatchedFontRecord:
@@ -405,6 +409,13 @@ class PerQualityTimeoutRow:
     new_count: int
     persistent_count: int
     missing_count: int = 0
+    control_error_count: int = 0
+    candidate_error_count: int = 0
+    diff_error_count: int = 0
+    resolved_error_count: int = 0
+    new_error_count: int = 0
+    persistent_error_count: int = 0
+    missing_error_count: int = 0
 
     def to_js_dict(self) -> dict:
         return {
@@ -416,6 +427,13 @@ class PerQualityTimeoutRow:
             "new_count": self.new_count,
             "persistent_count": self.persistent_count,
             "missing_count": self.missing_count,
+            "control_error_count": self.control_error_count,
+            "candidate_error_count": self.candidate_error_count,
+            "diff_error_count": self.diff_error_count,
+            "resolved_error_count": self.resolved_error_count,
+            "new_error_count": self.new_error_count,
+            "persistent_error_count": self.persistent_error_count,
+            "missing_error_count": self.missing_error_count,
         }
 
 
@@ -429,6 +447,7 @@ class TimeoutComparisonRow:
     status_badge: str
     control_desc: str
     candidate_desc: str
+    category: str = "TIMEOUT"
 
     def to_js_dict(self) -> dict:
         return {
@@ -440,6 +459,7 @@ class TimeoutComparisonRow:
             "status_badge": self.status_badge,
             "base_desc": self.control_desc,
             "cand_desc": self.candidate_desc,
+            "category": self.category,
         }
 
 
@@ -460,6 +480,16 @@ class TimeoutSummary:
     missing_count: int
     per_quality: List[PerQualityTimeoutRow]
     rows: List[TimeoutComparisonRow]
+    control_error_count: int = 0
+    candidate_error_count: int = 0
+    diff_error_count: int = 0
+    control_error_fonts_any: int = 0
+    candidate_error_fonts_any: int = 0
+    diff_error_fonts_any: int = 0
+    resolved_error_count: int = 0
+    new_error_count: int = 0
+    persistent_error_count: int = 0
+    missing_error_count: int = 0
 
     def to_js_dict(self) -> dict:
         return {
@@ -476,6 +506,16 @@ class TimeoutSummary:
             "new_count": self.new_count,
             "persistent_count": self.persistent_count,
             "missing_count": self.missing_count,
+            "control_error_count": self.control_error_count,
+            "candidate_error_count": self.candidate_error_count,
+            "diff_error_count": self.diff_error_count,
+            "control_error_fonts_any": self.control_error_fonts_any,
+            "candidate_error_fonts_any": self.candidate_error_fonts_any,
+            "diff_error_fonts_any": self.diff_error_fonts_any,
+            "resolved_error_count": self.resolved_error_count,
+            "new_error_count": self.new_error_count,
+            "persistent_error_count": self.persistent_error_count,
+            "missing_error_count": self.missing_error_count,
             "per_quality": [pq.to_js_dict() for pq in self.per_quality],
             "rows": [r.to_js_dict() for r in self.rows],
         }
@@ -898,9 +938,9 @@ def analyze_timeouts(
     all_qualities: Sequence[int],
     quality_filter: Optional[int] = None,
 ) -> TimeoutSummary:
-    """Compares timeouts/errors between control and candidate trials.
+    """Compares timeouts and errors between control and candidate trials.
 
-    Properly differentiates:
+    Properly differentiates timeouts from non-timeout errors, and tracks:
       - RESOLVED: failed in control, completed successfully in candidate
       - NEW: completed successfully in control, failed in candidate
       - PERSISTENT: failed in both control and candidate
@@ -913,80 +953,132 @@ def analyze_timeouts(
 
     qualities_to_check = [quality_filter] if quality_filter is not None else list(all_qualities)
 
+    # Global sets: (font_path, q)
+    b_to_set: set[Tuple[str, int]] = set()
+    c_to_set: set[Tuple[str, int]] = set()
     b_err_set: set[Tuple[str, int]] = set()
     c_err_set: set[Tuple[str, int]] = set()
+
     per_q_summary: List[PerQualityTimeoutRow] = []
 
     for q in qualities_to_check:
-        bq_set = {f for f, qmap in ctrl_errs.items() if q in qmap}
-        cq_set = {f for f, qmap in cand_errs.items() if q in qmap}
-        for f in bq_set:
+        bq_to = {f for f, qmap in ctrl_errs.items() if q in qmap and qmap[q].is_timeout}
+        cq_to = {f for f, qmap in cand_errs.items() if q in qmap and qmap[q].is_timeout}
+        bq_err = {f for f, qmap in ctrl_errs.items() if q in qmap and not qmap[q].is_timeout}
+        cq_err = {f for f, qmap in cand_errs.items() if q in qmap and not qmap[q].is_timeout}
+
+        for f in bq_to:
+            b_to_set.add((f, q))
+        for f in cq_to:
+            c_to_set.add((f, q))
+        for f in bq_err:
             b_err_set.add((f, q))
-        for f in cq_set:
+        for f in cq_err:
             c_err_set.add((f, q))
 
-        res_q = sum(1 for f in (bq_set - cq_set) if q in cand_data.get(f, {}))
-        miss_bq = sum(1 for f in (bq_set - cq_set) if q not in cand_data.get(f, {}))
-        new_q = sum(1 for f in (cq_set - bq_set) if q in ctrl_data.get(f, {}))
-        miss_cq = sum(1 for f in (cq_set - bq_set) if q not in ctrl_data.get(f, {}))
-        per_q = len(bq_set & cq_set)
-        missing_q = miss_bq + miss_cq
+        # Timeouts per quality
+        res_to_q = sum(1 for f in (bq_to - cq_to) if q in cand_data.get(f, {}))
+        miss_b_to_q = sum(1 for f in (bq_to - cq_to) if q not in cand_data.get(f, {}))
+        new_to_q = sum(1 for f in (cq_to - bq_to) if q in ctrl_data.get(f, {}))
+        miss_c_to_q = sum(1 for f in (cq_to - bq_to) if q not in ctrl_data.get(f, {}))
+        per_to_q = len(bq_to & cq_to)
+        missing_to_q = miss_b_to_q + miss_c_to_q
+
+        # Errors per quality
+        res_err_q = sum(1 for f in (bq_err - cq_err) if q in cand_data.get(f, {}))
+        miss_b_err_q = sum(1 for f in (bq_err - cq_err) if q not in cand_data.get(f, {}))
+        new_err_q = sum(1 for f in (cq_err - bq_err) if q in ctrl_data.get(f, {}))
+        miss_c_err_q = sum(1 for f in (cq_err - bq_err) if q not in ctrl_data.get(f, {}))
+        per_err_q = len(bq_err & cq_err)
+        missing_err_q = miss_b_err_q + miss_c_err_q
 
         per_q_summary.append(
             PerQualityTimeoutRow(
                 quality_level=q,
-                control_count=len(bq_set),
-                candidate_count=len(cq_set),
-                diff_count=len(cq_set) - len(bq_set),
-                resolved_count=res_q,
-                new_count=new_q,
-                persistent_count=per_q,
-                missing_count=missing_q,
+                control_count=len(bq_to),
+                candidate_count=len(cq_to),
+                diff_count=len(cq_to) - len(bq_to),
+                resolved_count=res_to_q,
+                new_count=new_to_q,
+                persistent_count=per_to_q,
+                missing_count=missing_to_q,
+                control_error_count=len(bq_err),
+                candidate_error_count=len(cq_err),
+                diff_error_count=len(cq_err) - len(bq_err),
+                resolved_error_count=res_err_q,
+                new_error_count=new_err_q,
+                persistent_error_count=per_err_q,
+                missing_error_count=missing_err_q,
             )
         )
 
-    all_err_pairs = sorted(b_err_set | c_err_set, key=lambda x: (os.path.basename(x[0]), x[1]))
+    all_pairs = sorted(b_to_set | c_to_set | b_err_set | c_err_set, key=lambda x: (os.path.basename(x[0]), x[1]))
     rows: List[TimeoutComparisonRow] = []
-    resolved_count = 0
-    new_count = 0
-    persistent_count = 0
-    missing_count = 0
 
-    for f, q in all_err_pairs:
-        in_b_err = (f, q) in b_err_set
-        in_c_err = (f, q) in c_err_set
+    resolved_to_count = 0
+    new_to_count = 0
+    persistent_to_count = 0
+    missing_to_count = 0
+
+    resolved_err_count = 0
+    new_err_count = 0
+    persistent_err_count = 0
+    missing_err_count = 0
+
+    for f, q in all_pairs:
+        # Determine category: TIMEOUT if it was a timeout in either trial; otherwise ERROR
+        is_timeout_row = ((f, q) in b_to_set) or ((f, q) in c_to_set)
+        category = "TIMEOUT" if is_timeout_row else "ERROR"
+
+        in_b = (f in ctrl_errs) and (q in ctrl_errs[f])
+        in_c = (f in cand_errs) and (q in cand_errs[f])
         b_ok = q in ctrl_data.get(f, {})
         c_ok = q in cand_data.get(f, {})
 
-        if in_b_err and not in_c_err:
+        if in_b and not in_c:
             if c_ok:
                 status = "RESOLVED"
                 status_key = "resolved"
                 status_badge = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                resolved_count += 1
+                if is_timeout_row:
+                    resolved_to_count += 1
+                else:
+                    resolved_err_count += 1
             else:
                 status = "MISSING DATA"
                 status_key = "missing"
                 status_badge = "bg-slate-500/20 text-slate-400 border-slate-500/30"
-                missing_count += 1
-        elif not in_b_err and in_c_err:
+                if is_timeout_row:
+                    missing_to_count += 1
+                else:
+                    missing_err_count += 1
+        elif not in_b and in_c:
             if b_ok:
-                status = "NEW TIMEOUT/ERROR"
+                status = "NEW TIMEOUT" if is_timeout_row else "NEW ERROR"
                 status_key = "new"
                 status_badge = "bg-rose-500/20 text-rose-400 border-rose-500/30"
-                new_count += 1
+                if is_timeout_row:
+                    new_to_count += 1
+                else:
+                    new_err_count += 1
             else:
                 status = "MISSING DATA"
                 status_key = "missing"
                 status_badge = "bg-slate-500/20 text-slate-400 border-slate-500/30"
-                missing_count += 1
+                if is_timeout_row:
+                    missing_to_count += 1
+                else:
+                    missing_err_count += 1
         else:
             status = "PERSISTENT"
             status_key = "persistent"
             status_badge = "bg-amber-500/20 text-amber-400 border-amber-500/30"
-            persistent_count += 1
+            if is_timeout_row:
+                persistent_to_count += 1
+            else:
+                persistent_err_count += 1
 
-        if in_b_err:
+        if in_b:
             be = ctrl_errs[f][q]
             detail_str = f" ({be.detail})" if (be.detail and be.detail != "Timeout occurred") else ""
             b_desc = be.error_type + detail_str
@@ -996,7 +1088,7 @@ def analyze_timeouts(
         else:
             b_desc = "Missing"
 
-        if in_c_err:
+        if in_c:
             ce = cand_errs[f][q]
             detail_str = f" ({ce.detail})" if (ce.detail and ce.detail != "Timeout occurred") else ""
             c_desc = ce.error_type + detail_str
@@ -1016,31 +1108,45 @@ def analyze_timeouts(
                 status_badge=status_badge,
                 control_desc=b_desc,
                 candidate_desc=c_desc,
+                category=category,
             )
         )
 
     num_q = len(qualities_to_check)
-    b_fonts_any = {f for f, q in b_err_set}
-    c_fonts_any = {f for f, q in c_err_set}
-    b_fonts_all = {f for f in b_fonts_any if sum(1 for q in qualities_to_check if (f, q) in b_err_set) == num_q}
-    c_fonts_all = {f for f in c_fonts_any if sum(1 for q in qualities_to_check if (f, q) in c_err_set) == num_q}
+    b_fonts_any_to = {f for f, q in b_to_set}
+    c_fonts_any_to = {f for f, q in c_to_set}
+    b_fonts_all_to = {f for f in b_fonts_any_to if sum(1 for q in qualities_to_check if (f, q) in b_to_set) == num_q}
+    c_fonts_all_to = {f for f in c_fonts_any_to if sum(1 for q in qualities_to_check if (f, q) in c_to_set) == num_q}
+
+    b_fonts_any_err = {f for f, q in b_err_set}
+    c_fonts_any_err = {f for f, q in c_err_set}
 
     return TimeoutSummary(
-        control_count=len(b_err_set),
-        candidate_count=len(c_err_set),
-        diff_count=len(c_err_set) - len(b_err_set),
-        control_fonts_any=len(b_fonts_any),
-        candidate_fonts_any=len(c_fonts_any),
-        diff_fonts_any=len(c_fonts_any) - len(b_fonts_any),
-        control_fonts_all=len(b_fonts_all),
-        candidate_fonts_all=len(c_fonts_all),
-        diff_fonts_all=len(c_fonts_all) - len(b_fonts_all),
-        resolved_count=resolved_count,
-        new_count=new_count,
-        persistent_count=persistent_count,
-        missing_count=missing_count,
+        control_count=len(b_to_set),
+        candidate_count=len(c_to_set),
+        diff_count=len(c_to_set) - len(b_to_set),
+        control_fonts_any=len(b_fonts_any_to),
+        candidate_fonts_any=len(c_fonts_any_to),
+        diff_fonts_any=len(c_fonts_any_to) - len(b_fonts_any_to),
+        control_fonts_all=len(b_fonts_all_to),
+        candidate_fonts_all=len(c_fonts_all_to),
+        diff_fonts_all=len(c_fonts_all_to) - len(b_fonts_all_to),
+        resolved_count=resolved_to_count,
+        new_count=new_to_count,
+        persistent_count=persistent_to_count,
+        missing_count=missing_to_count,
         per_quality=per_q_summary,
         rows=rows,
+        control_error_count=len(b_err_set),
+        candidate_error_count=len(c_err_set),
+        diff_error_count=len(c_err_set) - len(b_err_set),
+        control_error_fonts_any=len(b_fonts_any_err),
+        candidate_error_fonts_any=len(c_fonts_any_err),
+        diff_error_fonts_any=len(c_fonts_any_err) - len(b_fonts_any_err),
+        resolved_error_count=resolved_err_count,
+        new_error_count=new_err_count,
+        persistent_error_count=persistent_err_count,
+        missing_error_count=missing_err_count,
     )
 
 
@@ -1424,12 +1530,17 @@ def render_text_report(report: ComparisonReport, top_n: int = 10) -> str:
             f"{len(report.matched_records):,} unchanged (active fonts: 0)"
         )
 
-    # Timeouts
+    # Timeouts & Errors
     to = report.timeouts
     lines.append(
-        f" Timeouts & Errors:    {to.control_count:8d}  -> {to.candidate_count:8d}  "
+        f" Timeouts:             {to.control_count:8d}  -> {to.candidate_count:8d}  "
         f"| Net: {to.diff_count:+7d} "
         f"| Resolved: {to.resolved_count} | New: {to.new_count} | Persistent: {to.persistent_count} | Missing: {to.missing_count}"
+    )
+    lines.append(
+        f" Errors:               {to.control_error_count:8d}  -> {to.candidate_error_count:8d}  "
+        f"| Net: {to.diff_error_count:+7d} "
+        f"| Resolved: {to.resolved_error_count} | New: {to.new_error_count} | Persistent: {to.persistent_error_count} | Missing: {to.missing_error_count}"
     )
     lines.append("")
 
@@ -1530,15 +1641,20 @@ def render_text_report(report: ComparisonReport, top_n: int = 10) -> str:
         lines.append("TIMEOUTS & ERRORS PER QUALITY LEVEL")
         lines.append(subsep)
         lines.append(
-            f"{'Quality':<10} {'Control':>9} {'Candidate':>11} {'Net Change':>12} "
-            f"{'Resolved':>10} {'New':>8} {'Persistent':>12} {'Missing':>10}"
+            f"{'Quality':<10} {'Ctrl T/O':>8} {'Cand T/O':>8} {'T/O Δ':>7} "
+            f"{'T/O Res':>7} {'T/O New':>7} {'T/O Per':>7} {'T/O Mis':>7} | "
+            f"{'Ctrl Err':>8} {'Cand Err':>8} {'Err Δ':>7} "
+            f"{'Err Res':>7} {'Err New':>7} {'Err Per':>7} {'Err Mis':>7}"
         )
-        lines.append("-" * 86)
+        lines.append("-" * 126)
         for pq in report.timeouts.per_quality:
             lines.append(
-                f"Quality {pq.quality_level:<2} {pq.control_count:>9d} {pq.candidate_count:>11d} "
-                f"{pq.diff_count:>+12d} {pq.resolved_count:>10d} {pq.new_count:>8d} "
-                f"{pq.persistent_count:>12d} {pq.missing_count:>10d}"
+                f"Quality {pq.quality_level:<2} {pq.control_count:>8d} {pq.candidate_count:>8d} "
+                f"{pq.diff_count:>+7d} {pq.resolved_count:>7d} {pq.new_count:>7d} "
+                f"{pq.persistent_count:>7d} {pq.missing_count:>7d} | "
+                f"{pq.control_error_count:>8d} {pq.candidate_error_count:>8d} "
+                f"{pq.diff_error_count:>+7d} {pq.resolved_error_count:>7d} {pq.new_error_count:>7d} "
+                f"{pq.persistent_error_count:>7d} {pq.missing_error_count:>7d}"
             )
         lines.append("")
 
@@ -1549,7 +1665,7 @@ def render_text_report(report: ComparisonReport, top_n: int = 10) -> str:
         lines.append(subsep)
         for to_row in non_persistent_to[:15]:
             lines.append(
-                f" [{to_row.status:<18}] {to_row.font_name} (Q{to_row.quality_level})\n"
+                f" [{to_row.category} - {to_row.status:<14}] {to_row.font_name} (Q{to_row.quality_level})\n"
                 f"   Control:   {to_row.control_desc}\n"
                 f"   Candidate: {to_row.candidate_desc}"
             )
