@@ -1,0 +1,22 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+py_library(
+    name = "compare_runs_lib",
+    srcs = ["compare_runs.py"],
+    data = ["report_template.html"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "compare_runs",
+    srcs = ["compare_runs.py"],
+    data = ["report_template.html"],
+    main = "compare_runs.py",
+    visibility = ["//visibility:public"],
+)
+
+py_test(
+    name = "compare_runs_test",
+    srcs = ["compare_runs_test.py"],
+    deps = [":compare_runs_lib"],
+)
