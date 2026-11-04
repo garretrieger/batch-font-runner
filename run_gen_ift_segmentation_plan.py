@@ -28,6 +28,10 @@ IFT_COST_PATTERN = re.compile(r"^ift_total_cost = ([0-9]+)$", re.MULTILINE)
 NON_IFT_COST_PATTERN = re.compile(r"^non_ift_total_cost = ([0-9]+)$", re.MULTILINE)
 UNCOVERED_IFT_PATCH_COST_PATTERN = re.compile(r"^uncovered_ift_patch_cost = ([0-9]+)$", re.MULTILINE)
 
+TIMEOUT_PATTERN = re.compile(
+    r"^Timeout occurred for font:\s*(.+?),\s*trial:\s*(\S+)\s+at quality level:\s*(\d+)$"
+)
+
 def get_cjk_script_flag(font_path, trial_flags):
   """
   Checks METADATA.pb for CJK subsets and returns the appropriate flag if applicable.
@@ -174,8 +178,13 @@ def main():
   parser.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 4, help="Number of concurrent executions (default: number of CPUs).")
   parser.add_argument("-t", "--timeout", type=float, help="Timeout in seconds for each execution.")
   parser.add_argument("-r", "--resume", help="Path to a previous stdout log file to resume from. Skips already processed font/quality/trial tuples.")
+  parser.add_argument("--resume-error-log", help="Path to a previous stderr error log file to resume from. Skips timed out font/quality/trial tuples.")
 
   args = parser.parse_args()
+
+  if bool(args.resume) != bool(args.resume_error_log):
+    print("Error: Both --resume and --resume-error-log must be specified together.", file=sys.stderr)
+    sys.exit(1)
 
   if not os.path.isfile(args.input_file):
     print(f"Error: Input file '{args.input_file}' not found.", file=sys.stderr)
@@ -204,6 +213,18 @@ def main():
               pass
     else:
       print(f"Warning: Resume file '{args.resume}' not found. Starting from scratch.", file=sys.stderr)
+
+    if os.path.isfile(args.resume_error_log):
+      with open(args.resume_error_log, 'r') as f:
+        for line in f:
+          match = TIMEOUT_PATTERN.match(line.strip())
+          if match:
+            font_path = match.group(1).strip()
+            trial_name = match.group(2).strip()
+            quality_level = int(match.group(3))
+            skip_set.add((font_path, quality_level, trial_name))
+    else:
+      print(f"Warning: Resume error log file '{args.resume_error_log}' not found.", file=sys.stderr)
 
   result = subprocess.run(["./init-gen-segmentation-plan.sh"], capture_output=True, text=True)
   if result.returncode != 0:
